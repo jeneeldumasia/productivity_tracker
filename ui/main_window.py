@@ -3,16 +3,18 @@ from PyQt5.QtWidgets import (
     QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QLabel, 
     QPushButton, QStackedWidget, QGraphicsBlurEffect, QMessageBox, QFileDialog
 )
-from PyQt5.QtCore import QCoreApplication, QEvent, QPropertyAnimation, QEasingCurve, Qt
+from PyQt5.QtCore import QCoreApplication, QEvent, QPropertyAnimation, QEasingCurve, Qt, QTimer
 
 from data.data_handler import ensure_data_dir_and_files, load_config, save_config, append_activity, load_activities
 from tracking.window_detector import WindowDetector
 from utils.helpers import get_clean_app_name
 from utils.theme_manager import get_stylesheet
 
-from ui.pages.dashboard_page import DashboardPage
-from ui.pages.log_pages import LogPage
-from ui.pages.settings_page import SettingsPage
+from .pages.dashboard_page import DashboardPage
+from .pages.log_pages import LogPage
+from .pages.settings_page import SettingsPage
+from .widgets.compact_mode_widget import CompactModeWidget
+
 
 class ProductivityTrackerApp(QMainWindow):
     def __init__(self):
@@ -21,6 +23,13 @@ class ProductivityTrackerApp(QMainWindow):
         self.config = load_config()
         self.current_activity = None
         self.last_app_name = ""
+        self.is_paused = False
+
+        # --- Instantiate the Compact Mode Widget ---
+        self.compact_widget = CompactModeWidget(self)
+        self.compact_widget.show_full_window_requested.connect(self.toggle_compact_mode)
+        self.compact_widget.exit_requested.connect(self.close)
+        self.compact_widget.pause_requested.connect(self.toggle_pause)
 
         self.setWindowTitle("Automated Productivity Tracker")
         self.setGeometry(100, 100, 1250, 850)
@@ -28,6 +37,12 @@ class ProductivityTrackerApp(QMainWindow):
 
         self._setup_background()
         self._setup_ui()
+
+        # --- Setup the main UI timer ---
+        self.ui_timer = QTimer(self)
+        self.ui_timer.setInterval(1000)
+        self.ui_timer.timeout.connect(self.update_live_ui)
+        self.ui_timer.start()
 
         self.apply_theme()
         self.init_and_start_tracker()
@@ -98,11 +113,21 @@ class ProductivityTrackerApp(QMainWindow):
         self.menu_toggle_button.installEventFilter(self)
         self.nav_pane.installEventFilter(self)
         header_layout.addWidget(self.menu_toggle_button, alignment=Qt.AlignLeft)
+        header_layout.addStretch(1)
 
         title_label = QLabel("Productivity Tracker")
         title_label.setObjectName("headerTitle")
         header_layout.addWidget(title_label, alignment=Qt.AlignCenter)
-        header_layout.addStretch()
+        header_layout.addStretch(1)
+
+        # --- Add Compact Mode Button ---
+        self.compact_mode_button = QPushButton("↘")
+        self.compact_mode_button.setObjectName("headerButton")
+        self.compact_mode_button.setFixedSize(40, 40)
+        self.compact_mode_button.setToolTip("Switch to Compact Mode")
+        self.compact_mode_button.clicked.connect(self.toggle_compact_mode)
+        header_layout.addWidget(self.compact_mode_button, alignment=Qt.AlignRight)
+        
         parent_layout.addLayout(header_layout)
 
     def _create_pages(self, parent_layout):
@@ -157,31 +182,70 @@ class ProductivityTrackerApp(QMainWindow):
         self.update_all_ui()
 
     def init_and_start_tracker(self):
-        self.window_detector = WindowDetector(self.config['check_interval_seconds'])
-        self.window_detector.active_window_changed.connect(self.handle_window_change)
+        self.window_detector = WindowDetector(
+            self.config['check_interval_seconds'],
+            self.config['idle_threshold_minutes']
+        )
+        self.window_detector.activity_changed.connect(self.handle_activity_change)
         self.window_detector.start()
 
-    def handle_window_change(self, window_title):
-        app_name = get_clean_app_name(window_title)
-        if app_name != self.last_app_name:
+    def handle_activity_change(self, app_name_with_idle):
+        if self.is_paused:
+            return
+
+        clean_app_name = get_clean_app_name(app_name_with_idle)
+        
+        if clean_app_name != self.last_app_name:
             current_time = datetime.datetime.now()
-            if self.current_activity and self.last_app_name != "Idle/No Window":
+            if self.current_activity and self.last_app_name != "Idle":
                 duration = (current_time - self.current_activity['start_time']).total_seconds()
                 if duration > self.config['check_interval_seconds']:
                     self.current_activity.update({'end_time': current_time, 'duration_seconds': duration})
                     append_activity(self.current_activity)
                     self.update_all_ui()
-            self.current_activity = {'app_name': app_name, 'start_time': current_time}
-            self.last_app_name = app_name
+            
+            self.current_activity = {'app_name': clean_app_name, 'start_time': current_time, 'tags': ''}
+            self.last_app_name = clean_app_name
+            
+    def update_live_ui(self):
+        """This timer now updates both the full dashboard and the compact widget."""
+        if self.is_paused:
+            return
+
+        if self.isVisible():
             self.dashboard_page.update_live_ui(self.current_activity)
+        if self.compact_widget.isVisible():
+            self.compact_widget.update_display(self.current_activity)
+
+    def toggle_compact_mode(self):
+        """Switches between the main window and the compact widget."""
+        if self.isVisible():
+            self.hide()
+            self.compact_widget.show()
+        else:
+            self.compact_widget.hide()
+            self.show()
+
+    def toggle_pause(self):
+        """Pauses or resumes the activity tracking."""
+        self.is_paused = not self.is_paused
+        status = "Paused" if self.is_paused else "Resumed"
+        
+        # We can enhance this later to show a status on the compact widget
+        print(f"Tracking {status}")
 
     def save_settings_handler(self):
         old_interval = self.config['check_interval_seconds']
+        old_idle_threshold = self.config['idle_threshold_minutes']
+
         self.config['check_interval_seconds'] = self.settings_page.interval_spinbox.value()
+        self.config['idle_threshold_minutes'] = self.settings_page.idle_spinbox.value()
         self.config['productivity_apps'] = [app.strip() for app in self.settings_page.apps_input.text().split(',') if app.strip()]
+        
         save_config(self.config)
         
-        if old_interval != self.config['check_interval_seconds']:
+        # Restart tracker if critical settings changed
+        if old_interval != self.config['check_interval_seconds'] or old_idle_threshold != self.config['idle_threshold_minutes']:
             self.window_detector.stop()
             self.init_and_start_tracker()
             
@@ -206,11 +270,8 @@ class ProductivityTrackerApp(QMainWindow):
         if reply == QMessageBox.Yes:
             try:
                 # This is a placeholder for the actual clearing logic
-                # For now, it just shows a message
-                # In a real app, you would clear the CSV file
-                # For example:
-                # with open(ACTIVITIES_FILE, 'w') as f:
-                #     f.write("app_name,start_time,end_time,duration_seconds\n")
+                with open(load_activities.ACTIVITIES_FILE, 'w') as f:
+                     f.write("app_name,start_time,end_time,duration_seconds,tags\n")
                 self.update_all_ui()
                 QMessageBox.information(self, "Data Cleared", "All activity data has been deleted.")
             except Exception as e:
@@ -225,7 +286,7 @@ class ProductivityTrackerApp(QMainWindow):
         if self.current_activity:
             end_time = datetime.datetime.now()
             duration = (end_time - self.current_activity['start_time']).total_seconds()
-            if duration > 1:
+            if duration > 1 and not self.is_paused:
                 self.current_activity.update({'end_time': end_time, 'duration_seconds': duration})
                 append_activity(self.current_activity)
         self.window_detector.stop()

@@ -11,8 +11,18 @@ USER_ID_FILE = os.path.join(DATA_DIR, 'user_id.txt')
 def ensure_data_dir_and_files():
     """Ensures that the data directory and necessary files exist."""
     os.makedirs(DATA_DIR, exist_ok=True)
+
+    # --- Ensure Activities file has a tags column ---
     if not os.path.exists(ACTIVITIES_FILE):
-        pd.DataFrame(columns=['app_name', 'start_time', 'end_time', 'duration_seconds']).to_csv(ACTIVITIES_FILE, index=False)
+        # Create a new file with the tags column
+        pd.DataFrame(columns=['app_name', 'start_time', 'end_time', 'duration_seconds', 'tags']).to_csv(ACTIVITIES_FILE, index=False)
+    else:
+        # If the file exists, check if it has the tags column and add it if not
+        df = pd.read_csv(ACTIVITIES_FILE)
+        if 'tags' not in df.columns:
+            df['tags'] = '' # Add an empty tags column
+            df.to_csv(ACTIVITIES_FILE, index=False)
+
     if not os.path.exists(USER_ID_FILE):
         with open(USER_ID_FILE, 'w') as f:
             f.write(str(uuid.uuid4()))
@@ -57,13 +67,36 @@ def load_activities():
         df['start_time'] = pd.to_datetime(df['start_time'])
         df['end_time'] = pd.to_datetime(df['end_time'])
         df['duration_seconds'] = pd.to_numeric(df['duration_seconds'])
+        # Ensure the tags column is treated as a string, filling empty values
+        if 'tags' not in df.columns:
+            df['tags'] = ''
+        df['tags'] = df['tags'].fillna('').astype(str)
         return df
     except (FileNotFoundError, pd.errors.EmptyDataError):
-        return pd.DataFrame(columns=['app_name', 'start_time', 'end_time', 'duration_seconds'])
+        return pd.DataFrame(columns=['app_name', 'start_time', 'end_time', 'duration_seconds', 'tags'])
 
 def append_activity(activity_data):
     """Appends a new activity record to the CSV file."""
+    # Ensure the new activity has a 'tags' key
+    if 'tags' not in activity_data:
+        activity_data['tags'] = ''
+        
     df = load_activities()
     new_df = pd.DataFrame([activity_data])
     df = pd.concat([df, new_df], ignore_index=True)
     df.to_csv(ACTIVITIES_FILE, index=False)
+
+def update_activity_tags(start_time, new_tags):
+    """Finds an activity by its start time and updates its tags."""
+    df = load_activities()
+    # Find the row that matches the start time (this should be unique)
+    # Using a tolerance for timestamp matching
+    start_time_dt = pd.to_datetime(start_time)
+    mask = (df['start_time'] >= start_time_dt - pd.Timedelta(seconds=1)) & \
+           (df['start_time'] <= start_time_dt + pd.Timedelta(seconds=1))
+
+    if mask.any():
+        df.loc[mask, 'tags'] = new_tags
+        df.to_csv(ACTIVITIES_FILE, index=False)
+        return True
+    return False
