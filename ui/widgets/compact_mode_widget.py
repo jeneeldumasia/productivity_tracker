@@ -9,18 +9,16 @@ class CompactModeWidget(QWidget):
     pause_requested = pyqtSignal()
 
     def __init__(self, main_window):
-        super().__init__()
+        super().__init__(parent=None) # This makes it an independent window
         self.main_window = main_window
-        
         # --- Widget Styling and Behavior ---
-        # This makes the widget borderless and ensures it stays on top of other windows
         self.setWindowFlags(Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint)
         self.setAttribute(Qt.WA_TranslucentBackground)
-        self.setGeometry(100, 100, 300, 80) # Set initial size and position
+        self.setGeometry(100, 100, 300, 80)
 
         # --- UI Elements ---
         self.container = QWidget(self)
-        self.container.setObjectName("glassCard") # Reuse the glass card style
+        self.container.setObjectName("compactWidgetCard")
         
         layout = QVBoxLayout(self.container)
         layout.setContentsMargins(15, 10, 15, 10)
@@ -36,18 +34,15 @@ class CompactModeWidget(QWidget):
         layout.addWidget(self.app_name_label)
         layout.addWidget(self.timer_label)
 
-        # Main layout for the frameless window
         main_layout = QVBoxLayout(self)
         main_layout.addWidget(self.container)
         self.setLayout(main_layout)
 
-        # For dragging the frameless window
         self._drag_pos = QPoint()
 
     def update_display(self, current_activity):
         """Public method to update the labels from the main window."""
         if current_activity:
-            # Truncate long app names for the compact view
             app_name = current_activity.get('app_name', 'N/A')
             if len(app_name) > 35:
                 app_name = app_name[:32] + "..."
@@ -58,7 +53,6 @@ class CompactModeWidget(QWidget):
             duration_str = str(datetime.timedelta(seconds=int(duration)))
             self.timer_label.setText(duration_str)
         
-        # Apply the correct text color based on the current theme
         is_dark = self.main_window.config.get('is_dark_mode', False)
         text_color = "#F0F0F0" if is_dark else "#222"
         self.app_name_label.setStyleSheet(f"color: {text_color}; font-size: 14px;")
@@ -82,7 +76,6 @@ class CompactModeWidget(QWidget):
         elif action == pause_action:
             self.pause_requested.emit()
 
-    # --- Methods to make the frameless window draggable ---
     def mousePressEvent(self, event):
         self._drag_pos = event.globalPos()
 

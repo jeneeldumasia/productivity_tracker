@@ -26,7 +26,7 @@ class ProductivityTrackerApp(QMainWindow):
         self.is_paused = False
 
         # --- Instantiate the Compact Mode Widget ---
-        self.compact_widget = CompactModeWidget(self)
+        self.compact_widget = CompactModeWidget(main_window=self)
         self.compact_widget.show_full_window_requested.connect(self.toggle_compact_mode)
         self.compact_widget.exit_requested.connect(self.close)
         self.compact_widget.pause_requested.connect(self.toggle_pause)
@@ -221,6 +221,7 @@ class ProductivityTrackerApp(QMainWindow):
         """Switches between the main window and the compact widget."""
         if self.isVisible():
             self.hide()
+            self.compact_widget.update_display(self.current_activity) # Explicitly update before showing
             self.compact_widget.show()
         else:
             self.compact_widget.hide()
