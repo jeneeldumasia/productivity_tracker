@@ -1,5 +1,5 @@
 key,value
 check_interval_seconds,1
-productivity_apps,"VS Code,Google Chrome,PyCharm"
-is_dark_mode,True
+productivity_apps,"VS Code,Google Chrome,Python"
+is_dark_mode,False
 idle_threshold_minutes,5
