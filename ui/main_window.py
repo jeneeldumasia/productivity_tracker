@@ -1,7 +1,8 @@
 import datetime
 from PyQt5.QtWidgets import (
     QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QLabel,
-    QPushButton, QStackedWidget, QGraphicsBlurEffect, QMessageBox, QFileDialog
+    QPushButton, QStackedWidget, QGraphicsBlurEffect, QMessageBox, QFileDialog,
+    QSystemTrayIcon, QStyle, QAction, QMenu
 )
 from PyQt5.QtCore import QCoreApplication, QEvent, QPropertyAnimation, QEasingCurve, Qt, QTimer
 
@@ -10,7 +11,6 @@ from tracking.window_detector import WindowDetector
 from utils.helpers import get_clean_app_name
 from utils.theme_manager import get_stylesheet
 
-# Import the new page
 from .pages.dashboard_page import DashboardPage
 from .pages.log_pages import LogPage
 from .pages.settings_page import SettingsPage
@@ -28,13 +28,16 @@ class ProductivityTrackerApp(QMainWindow):
         self.is_paused = False
 
         self.compact_widget = CompactModeWidget(main_window=self)
-        self.compact_widget.show_full_window_requested.connect(self.toggle_compact_mode)
-        self.compact_widget.exit_requested.connect(self.close)
+        self.compact_widget.show_full_window_requested.connect(self.toggle_view)
+        self.compact_widget.exit_requested.connect(self.close_application)
         self.compact_widget.pause_requested.connect(self.toggle_pause)
 
         self.setWindowTitle("Automated Productivity Tracker")
         self.setGeometry(100, 100, 1250, 850)
         self.setMinimumSize(1000, 700)
+
+        # --- Setup System Tray Icon ---
+        self._setup_tray_icon()
 
         self._setup_background()
         self._setup_ui()
@@ -49,31 +52,105 @@ class ProductivityTrackerApp(QMainWindow):
         self.update_all_ui()
         QCoreApplication.instance().aboutToQuit.connect(self.on_app_exit)
 
+    def _setup_tray_icon(self):
+        """Creates the system tray icon and its context menu."""
+        self.tray_icon = QSystemTrayIcon(self)
+        # You should create an 'icon.png' file in your project's root directory
+        self.tray_icon.setIcon(self.style().standardIcon(QStyle.SP_ComputerIcon))
+        self.tray_icon.setToolTip("Productivity Tracker is running")
+        
+        tray_menu = QMenu()
+        
+        self.toggle_view_action = QAction("Show/Hide Window", self)
+        self.toggle_view_action.triggered.connect(self.toggle_view)
+        tray_menu.addAction(self.toggle_view_action)
+        
+        self.pause_action = QAction("Pause Tracking", self)
+        self.pause_action.triggered.connect(self.toggle_pause)
+        tray_menu.addAction(self.pause_action)
+        
+        tray_menu.addSeparator()
+        
+        exit_action = QAction("Exit", self)
+        exit_action.triggered.connect(self.close_application)
+        tray_menu.addAction(exit_action)
+        
+        self.tray_icon.setContextMenu(tray_menu)
+        self.tray_icon.show()
+
+    def toggle_view(self):
+        """Shows or hides the main window or compact widget."""
+        if self.isVisible() or self.compact_widget.isVisible():
+            self.hide()
+            self.compact_widget.hide()
+        else:
+            self.show()
+
+    def toggle_compact_mode(self):
+        """Switches between the main window and the compact widget."""
+        if self.isVisible():
+            self.hide()
+            self.compact_widget.update_display(self.current_activity, self.is_paused)
+            self.compact_widget.show()
+        else:
+            self.compact_widget.hide()
+            self.show()
+
+    def closeEvent(self, event):
+        """Overrides the default close event to hide the window instead of exiting."""
+        event.ignore()
+        self.hide()
+        self.tray_icon.showMessage(
+            "Still Running",
+            "The productivity tracker is still running in the background.",
+            QSystemTrayIcon.Information,
+            2000
+        )
+
+    def close_application(self):
+        """Closes the application cleanly."""
+        QCoreApplication.instance().quit()
+        
+    def toggle_pause(self):
+        """Pauses or resumes the activity tracking and updates the tray menu text."""
+        self.is_paused = not self.is_paused
+        
+        if self.is_paused:
+            self.pause_action.setText("Resume Tracking")
+            if self.current_activity:
+                end_time = datetime.datetime.now()
+                duration = (end_time - self.current_activity['start_time']).total_seconds()
+                if duration > self.config['check_interval_seconds']:
+                    self.current_activity.update({'end_time': end_time, 'duration_seconds': duration})
+                    append_activity(self.current_activity)
+            self.current_activity = None
+            self.last_app_name = "Paused"
+        else:
+            self.pause_action.setText("Pause Tracking")
+        
+        self.update_live_ui()
+    
+    # ... (the rest of your main_window.py file remains unchanged)
     def _create_collapsible_menu(self):
         self.nav_pane = QWidget()
         self.nav_pane.setObjectName("navPane")
         nav_layout = QVBoxLayout(self.nav_pane)
         nav_layout.setContentsMargins(5, 15, 5, 15)
         nav_layout.setAlignment(Qt.AlignTop)
-
-        # Add the new button to the dictionary
         self.nav_buttons = {
             "📊  Dashboard": QPushButton("📊  Dashboard"),
             "📈  Weekly Report": QPushButton("📈  Weekly Report"),
             "📋  Activity Log": QPushButton("📋  Activity Log"),
             "⚙️  Settings": QPushButton("⚙️  Settings")
         }
-
         for text, button in self.nav_buttons.items():
             button.setObjectName("navButton")
             nav_layout.addWidget(button)
-        
         nav_layout.addStretch()
         exit_button = QPushButton("❌  Exit")
         exit_button.setObjectName("navButton")
         exit_button.clicked.connect(self.close)
         nav_layout.addWidget(exit_button)
-
         self.nav_pane.setFixedWidth(0)
         self.main_layout.addWidget(self.nav_pane)
         self.menu_animation = QPropertyAnimation(self.nav_pane, b"minimumWidth")
@@ -83,17 +160,14 @@ class ProductivityTrackerApp(QMainWindow):
     def _create_pages(self, parent_layout):
         self.stacked_widget = QStackedWidget()
         self.dashboard_page = DashboardPage(self)
-        self.weekly_report_page = WeeklyReportPage(self) # Instantiate the new page
+        self.weekly_report_page = WeeklyReportPage(self)
         self.log_page = LogPage(self)
         self.settings_page = SettingsPage(self)
-
         self.stacked_widget.addWidget(self.dashboard_page)
-        self.stacked_widget.addWidget(self.weekly_report_page) # Add it to the stacked widget
+        self.stacked_widget.addWidget(self.weekly_report_page)
         self.stacked_widget.addWidget(self.log_page)
         self.stacked_widget.addWidget(self.settings_page)
         parent_layout.addWidget(self.stacked_widget)
-
-        # Connect navigation buttons
         self.nav_buttons["📊  Dashboard"].clicked.connect(lambda: self.stacked_widget.setCurrentWidget(self.dashboard_page))
         self.nav_buttons["📈  Weekly Report"].clicked.connect(lambda: self.stacked_widget.setCurrentWidget(self.weekly_report_page))
         self.nav_buttons["📋  Activity Log"].clicked.connect(lambda: self.stacked_widget.setCurrentWidget(self.log_page))
@@ -103,9 +177,8 @@ class ProductivityTrackerApp(QMainWindow):
         activities = load_activities()
         self.log_page.display_activities(activities)
         self.dashboard_page.generate_activity_report(activities, self.config)
-        self.weekly_report_page.update_report() # Ensure the weekly report also updates
+        self.weekly_report_page.update_report()
 
-    # ... (the rest of your main_window.py file remains unchanged)
     def handle_return_from_idle(self, idle_activity, new_app_name):
         idle_duration_minutes = round(idle_activity['duration_seconds'] / 60)
         msg_box = QMessageBox(self)
@@ -154,16 +227,7 @@ class ProductivityTrackerApp(QMainWindow):
                     append_activity(self.current_activity)
                     self.update_all_ui()
             self.start_new_activity(clean_app_name)
-
-    def toggle_compact_mode(self):
-        if self.isVisible():
-            self.hide()
-            self.compact_widget.update_display(self.current_activity)
-            self.compact_widget.show()
-        else:
-            self.compact_widget.hide()
-            self.show()
-
+            
     def _setup_background(self):
         self.background_widget = QWidget(self)
         self.background_widget.setObjectName("backgroundWidget")
@@ -250,14 +314,10 @@ class ProductivityTrackerApp(QMainWindow):
         self.window_detector.start()
 
     def update_live_ui(self):
-        if self.is_paused: return
-        if self.isVisible(): self.dashboard_page.update_live_ui(self.current_activity)
-        if self.compact_widget.isVisible(): self.compact_widget.update_display(self.current_activity)
-
-    def toggle_pause(self):
-        self.is_paused = not self.is_paused
-        status = "Paused" if self.is_paused else "Resumed"
-        print(f"Tracking {status}")
+        if self.isVisible():
+            self.dashboard_page.update_live_ui(self.current_activity, self.is_paused)
+        if self.compact_widget.isVisible():
+            self.compact_widget.update_display(self.current_activity, self.is_paused)
 
     def save_settings_handler(self):
         old_interval = self.config['check_interval_seconds']
@@ -289,6 +349,7 @@ class ProductivityTrackerApp(QMainWindow):
         reply = QMessageBox.question(self, 'Confirm Deletion', "Delete ALL activity data?\nThis cannot be undone.", QMessageBox.Yes | QMessageBox.No, QMessageBox.No)
         if reply == QMessageBox.Yes:
             from data.data_handler import ACTIVITIES_FILE
+            import pandas as pd
             pd.DataFrame(columns=['app_name', 'start_time', 'end_time', 'duration_seconds', 'tags']).to_csv(ACTIVITIES_FILE, index=False)
             self.update_all_ui()
             QMessageBox.information(self, "Data Cleared", "All activity data has been deleted.")
@@ -300,5 +361,5 @@ class ProductivityTrackerApp(QMainWindow):
             if duration > 1 and not self.is_paused:
                 self.current_activity.update({'end_time': end_time, 'duration_seconds': duration})
                 append_activity(self.current_activity)
-        self.window_detector.stop()
+        if self.window_detector: self.window_detector.stop()
         print("Application exiting. Final activity saved.")

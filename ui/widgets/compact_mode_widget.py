@@ -40,18 +40,31 @@ class CompactModeWidget(QWidget):
 
         self._drag_pos = QPoint()
 
-    def update_display(self, current_activity):
+    def update_display(self, current_activity, is_paused):
         """Public method to update the labels from the main window."""
-        if current_activity:
-            app_name = current_activity.get('app_name', 'N/A')
-            if len(app_name) > 35:
-                app_name = app_name[:32] + "..."
+        is_dark = self.main_window.config.get('is_dark_mode', False)
+        
+        if is_paused:
+            self.app_name_label.setText("Tracking Paused")
+            self.timer_label.setText("00:00:00")
+            # Set a distinct color for the paused state
+            text_color = "#FFA726" # A nice orange color
+        else:
+            if current_activity:
+                app_name = current_activity.get('app_name', 'N/A')
+                if len(app_name) > 35:
+                    app_name = app_name[:32] + "..."
+                
+                self.app_name_label.setText(app_name)
+                
+                duration = (datetime.datetime.now() - current_activity.get('start_time', datetime.datetime.now())).total_seconds()
+                duration_str = str(datetime.timedelta(seconds=int(duration)))
+                self.timer_label.setText(duration_str)
             
-            self.app_name_label.setText(app_name)
-            
-            duration = (datetime.datetime.now() - current_activity.get('start_time', datetime.datetime.now())).total_seconds()
-            duration_str = str(datetime.timedelta(seconds=int(duration)))
-            self.timer_label.setText(duration_str)
+            text_color = "#F0F0F0" if is_dark else "#222"
+
+        self.app_name_label.setStyleSheet(f"color: {text_color}; font-size: 14px;")
+        self.timer_label.setStyleSheet(f"color: {text_color}; font-size: 20px; font-weight: bold;")
         
         is_dark = self.main_window.config.get('is_dark_mode', False)
         text_color = "#F0F0F0" if is_dark else "#222"

@@ -74,12 +74,16 @@ class DashboardPage(QWidget):
         scroll_area.setWidget(content_card)
         page_layout.addWidget(scroll_area)
         
-    def update_live_ui(self, current_activity):
+    def update_live_ui(self, current_activity, is_paused):
+        if is_paused:
+            self.current_app_label.setText("<b>Current App:</b> <font color='#FFA726'>Paused</font>")
+            self.current_duration_label.setText("<b>Duration:</b> 00:00:00")
+            return
+
         if current_activity:
             self.current_app_label.setText(f"<b>Current App:</b> {current_activity['app_name']}")
             duration = (datetime.datetime.now() - current_activity['start_time']).total_seconds()
             self.current_duration_label.setText(f"<b>Duration:</b> {str(datetime.timedelta(seconds=int(duration)))}")
-
     def update_tag_filter(self, activities_df):
         """Populates the tag filter dropdown with unique tags from the data."""
         self.tag_filter_combo.blockSignals(True) # Prevent signal firing while we repopulate
